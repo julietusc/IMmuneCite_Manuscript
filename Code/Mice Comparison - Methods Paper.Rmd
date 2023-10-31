@@ -1,0 +1,1816 @@
+---
+title: "Methods Paper MICE"
+author: "Sarah Bangerth"
+date: "2023-09-28"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd('/users/sarahbangerth/Desktop/Github/IMC_Methods/IMC_Methods_Paper')
+
+## Libraries
+library(imcRtools)
+library(cytomapper)
+library(dplyr)
+library(ComplexHeatmap)
+library(CATALYST)
+library(singleCellTK)
+library(tidyverse)
+library(circlize)
+library(reshape2)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+```
+
+# DATA STANDARDIZATION ON BOTH DATASETS TOGETHER
+
+```{r}
+raw_sce = readRDS("Data/Mice/mouse_raw_data_Cells.rds")
+raw_sce$Data = 'Raw'
+
+processed_sce = readRDS("Data/Mice/mouse_preprocessed_data_Cells.rds")
+processed_sce$Data = 'Pre-processed'
+```
+
+```{r}
+unique(raw_sce$Clusters)
+unique(processed_sce$Clusters)
+
+unique(raw_sce$Subcluster)
+unique(processed_sce$Subcluster)
+
+raw_sce[,raw_sce$Clusters=='CD4+ T-cells']
+raw_sce[,raw_sce$Clusters=='CD8+ T-cells']
+raw_sce[,raw_sce$Clusters=='B cells']
+raw_sce[,raw_sce$Clusters=='PMN']
+raw_sce[,raw_sce$Clusters=='Macrophages']
+raw_sce[,raw_sce$Clusters=='Dendritic cells']
+raw_sce[,raw_sce$Clusters=='Endothelial cells']
+raw_sce[,raw_sce$Clusters=='Epithelial cells']
+raw_sce[,raw_sce$Clusters=='Myofibroblasts']
+raw_sce[,raw_sce$Clusters=='Other non-immune']
+
+processed_sce[,processed_sce$Clusters=='CD4+ T-cells']
+processed_sce[,processed_sce$Clusters=='CD8+ T-cells']
+processed_sce[,processed_sce$Clusters=='B cells']
+processed_sce[,processed_sce$Clusters=='PMN']
+processed_sce[,processed_sce$Clusters=='Macrophages']
+processed_sce[,processed_sce$Clusters=='Dendritic cells']
+processed_sce[,processed_sce$Clusters=='Endothelial cells']
+processed_sce[,processed_sce$Clusters=='Epithelial cells']
+processed_sce[,processed_sce$Clusters=='Myofibroblasts']
+processed_sce[,processed_sce$Clusters=='Other non-immune']
+
+raw_sce[,raw_sce$Subcluster=='CD4+ Tregs']
+processed_sce[,processed_sce$Subcluster=='CD4+ Tregs']
+```
+
+```{r}
+rowData(processed_sce)$channel = rowData(raw_sce)$channel
+rowData(raw_sce)$name = rowData(processed_sce)$name
+
+rowData(raw_sce)$keep = NULL
+rowData(raw_sce)$ilastik = NULL
+rowData(raw_sce)$deepcell = NULL
+rowData(raw_sce)$cellpose = NULL
+
+rowData(processed_sce)$keep = NULL
+rowData(processed_sce)$ilastik = NULL
+rowData(processed_sce)$deepcell = NULL
+rowData(processed_sce)$cellpose = NULL
+
+raw_sce[,raw_sce$Subcluster=='PDL1+ dendritic cells']$Subcluster = "PDL1+ Dendritic cells"
+raw_sce[,raw_sce$Subcluster=='CD86+ dendritic cells']$Subcluster = "CD86+ Dendritic cells"
+
+sce_combined = cbind(raw_sce, processed_sce, deparse.level = 1)
+assay(sce_combined,'exprs') [,1]
+
+assay(sce_combined, "z-exprs") = asinh(counts(sce_combined)/5)
+
+assay(sce_combined,'z-exprs') = t(scale(t(assay(sce_combined,'z-exprs'))))
+assay(sce_combined,'z-exprs') [,1]
+
+sce_combined$Clusters = factor(sce_combined$Clusters,
+                               levels=c('CD4+ T-cells', 'CD8+ T-cells', 'Macrophages', 'Myofibroblasts', 
+                                        'B cells','Dendritic cells','PMN','Epithelial cells', 'Endothelial cells',
+                                        'Other non-immune'))
+```
+
+```{r}
+markers_to_include = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','MMR-CD206','CD11b','S100A4','CD29',
+                       'PDPN','CD31','K14','Pan-Keratin','Vimentin','Arginase-1','CD11c','B220','CD3e','CD4','CD8a',
+                       'CD161','Foxp3','CD86','Granzyme-B','CD45','PD-L1','PD-1','Ki-67')
+marker_expression <- data.frame(t(assay(sce_combined[markers_to_include,], "z-exprs")))
+marker_expression$cellID <- rownames(marker_expression)
+dat <- data.frame(colData(sce_combined)[,"Data"])
+colnames(dat) = "Data"
+dat$cellID <- rownames(marker_expression)
+dat <- left_join(dat, marker_expression)
+dat$cellID <- NULL
+head(dat)
+
+dat_aggr <- dat %>%
+  group_by(Data) %>%
+  summarise_all(funs(median))
+
+dat_sum <- dat %>%
+  group_by(Data) %>%
+  dplyr::summarise(n=n())
+
+rownames(dat_sum) = dat_sum$Data
+dat_sum <- data.frame(t(dat_sum))
+m <- as.matrix((dat_aggr[,-c(1)]))
+rownames(m) <- dat_aggr$Data
+
+ha_right <- rowAnnotation(" " = anno_barplot((as.numeric(dat_sum[2,])),
+                                                     add_numbers = TRUE,numbers_gp = gpar(fontsize = 20),
+                                                     which = "row",
+                                                     numbers_rot=0,
+                                                     ylim=c(0,300000),
+                                                     axis=FALSE,
+                                                     border=FALSE,
+                                                     width = unit(3, "cm")))
+
+scaled_heatmap = Heatmap(m, name = "Scaled expression",border='black',
+                                  cluster_columns = FALSE,
+                                  show_column_dend = FALSE,
+                                  cluster_rows = FALSE,
+                                  show_row_dend = FALSE,
+                                  column_names_rot = 90,
+                                  column_names_centered = FALSE,
+                                  show_column_names = TRUE,
+                                  row_title_gp = gpar(fontsize = 23), #23
+                                  row_names_gp = gpar(fontsize = 25),
+                                  column_names_gp = gpar(fontsize = 25),
+                                  right_annotation = ha_right,
+                                  # left_annotation = ha_left,
+                                  rect_gp = gpar(col = "white", lwd = 2),
+                                  # col = colorRamp2(c(-1, 0, 2), c("blue", "white", "red")),
+                                  col = colorRamp2(c(-1, 1), hcl_palette='viridis'),
+                                  heatmap_legend_param = list(at = c(-1:1), legend_width = unit(6,"cm"),
+                                                              direction="horizontal", title_gp = gpar(fontsize=12),
+                                                              title_position = "topcenter",
+                                                              labels_gp = gpar(fontsize=12)),
+                                  column_names_side = "bottom",
+                                  row_names_side = 'left',
+                                  height = unit(5, "cm"),
+                                  width = unit(28,"cm"))
+
+draw(scaled_heatmap, heatmap_legend_side = "top")
+```
+
+T-sne
+
+```{r}
+rownames(rowData(sce_combined))
+markers_to_include = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','MMR-CD206','CD11b','S100A4','CD29',
+                       'PDPN','CD31','K14','Pan-Keratin','Vimentin','Arginase-1','CD11c','B220','CD3e','CD4','CD8a',
+                       'CD161','Foxp3','CD86','Granzyme-B','CD45','PD-L1','PD-1','Ki-67')
+
+set.seed(88)
+sce_combined = runDR(sce_combined, "TSNE", features = markers_to_include) 
+
+# Save object with tsne results for future use
+exportSCE(sce_combined, samplename = "sce_combined_MICE_methods", directory = "./",
+          type = "Cells",format = "SCE")
+sce_combined = readRDS("/users/sarahbangerth/Desktop/IMC/Methods Paper/sce_combined_MICE_methods/R/sce_combined_MICE_methods_Cells.rds")
+
+unique(sce_combined$Clusters)
+sce_combined$Clusters = factor(sce_combined$Clusters,
+                               levels=c('CD4+ T-cells', 'CD8+ T-cells','Macrophages', 'Myofibroblasts', 
+                                        'B cells','Dendritic cells','PMN','Epithelial cells', 'Endothelial cells',
+                                        'Other non-immune'))
+
+# Facet by clinical group, but excluding Hepatocytes
+sce_combined_noHep = sce_combined[,sce_combined$Clusters != 'Other non-immune']
+sce_combined_noHep$Clusters = factor(sce_combined_noHep$Clusters,
+                               levels=c('CD4+ T-cells', 'CD8+ T-cells','Macrophages', 'Myofibroblasts', 
+                                        'B cells','Dendritic cells','PMN','Epithelial cells', 'Endothelial cells'))
+
+plotDR(sce_combined_noHep[,sce_combined_noHep$Data=='Raw'], "TSNE", color_by = "Clusters") +
+  xlab("tSNE 1") + ylab("tSNE 2") +
+  theme(panel.grid=element_blank(),
+        axis.text=element_blank(),
+        axis.title=element_text(size=20),
+        strip.text=element_text(size = 28, hjust = 0.5),
+        aspect.ratio=1,
+        legend.position='bottom',
+        legend.title=element_blank(),
+        legend.text=element_text(size=20)) +
+  guides(color = guide_legend(override.aes = list(size = 6))) +
+  scale_color_manual(values=c("#C04000","orange","#0096FF","green","#bf812d",
+                              "#ae017e","#CCCCFF","#FFEA00","#313695"))
+                              
+plotDR(sce_combined_noHep[,sce_combined_noHep$Data=='Pre-processed'], "TSNE", color_by = "Clusters") +
+  xlab("tSNE 1") + ylab("tSNE 2") +
+  theme(panel.grid=element_blank(),
+        axis.text=element_blank(),
+        axis.title=element_text(size=20),
+        strip.text=element_text(size = 28, hjust = 0.5),
+        aspect.ratio=1,
+        legend.position='bottom',
+        legend.title=element_blank(),
+        legend.text=element_text(size=20)) +
+  guides(color = guide_legend(override.aes = list(size = 6))) +
+  scale_color_manual(values=c("#C04000","orange","#0096FF","green","#bf812d",
+                              "#ae017e","#CCCCFF","#FFEA00","#313695"))
+```
+
+METACLUSTER HEATMAPS
+
+RAW 
+
+```{r}
+
+markers_to_include = c('aSMA', 'CD29','Ecad', 'CD31', 'CD3e', 'CD4', 'CD8a', 'B220', 'CD11b', 'CD161', 'Ly6G', 'F480', 'CD68', 'MMR-CD206', 'CD11c', 'MHCII' )
+
+marker_expression <- data.frame(t(assay(raw_sce[markers_to_include,], "exprs")))
+marker_expression$cellID <- rownames(marker_expression)
+dat <- data.frame(colData(raw_sce)[,"Clusters"])
+
+colnames(dat) = "Clusters"
+dat$cellID <- rownames(marker_expression)
+dat <- left_join(dat, marker_expression)
+dat$cellID <- NULL
+head(dat)
+
+# Re-ordering column markers
+colnames(dat)[6] = 'CD3'
+colnames(dat)[8] = 'CD8'
+colnames(dat)[15] = 'CD206'
+htmap_col_order <- c('Clusters', 'aSMA', 'CD29','Ecad', 'CD31', 'CD3', 'CD4', 'CD8', 'B220', 'CD11b', 'CD161', 'Ly6G', 'F480', 'CD68', 'CD206', 'CD11c', 'MHCII' )
+dat <- dat[, htmap_col_order]
+
+dat_aggr <- dat %>%
+  group_by(Clusters) %>%
+  summarise_all(funs(median))
+
+dat_sum <- dat %>%
+  group_by(Clusters) %>%
+  dplyr::summarise(n=n())
+
+rownames(dat_sum) = dat_sum$Clusters
+dat_sum = dat_sum[c('Other non-immune', 'Myofibroblasts', 'Epithelial cells', 'Endothelial cells', 'CD4+ T-cells', 'CD8+ T-cells', 'B cells', 'PMN', 'Macrophages', 'Dendritic cells'),]
+
+dat_sum <- data.frame(t(dat_sum))
+m <- as.matrix((dat_aggr[,-c(1)]))
+rownames(m) <- dat_aggr$Clusters
+
+m = m[c('Other non-immune', 'Myofibroblasts', 'Epithelial cells', 'Endothelial cells', 'CD4+ T-cells', 'CD8+ T-cells', 'B cells', 'PMN', 'Macrophages', 'Dendritic cells'),]
+
+ha_right <- rowAnnotation(" " = anno_barplot((as.numeric(dat_sum[2,])),
+                                                     add_numbers = TRUE,numbers_gp = gpar(fontsize = 20),
+                                                     which = "row",
+                                                     numbers_rot=0,
+                                                     ylim=c(0,300000),
+                                                     axis=FALSE,
+                                                     border=FALSE,
+                                                     width = unit(3, "cm")))
+
+
+col_fun = colorRamp2(c(1,2,3,4,5,6,7,8,9,10), 
+                     c("lightblue","green","#FFEA00","#313695",
+                        "#C04000","orange","#bf812d","#CCCCFF","#0096FF","#ae017e"))
+ha_left = HeatmapAnnotation(Metaclusters = 1:10, col = list(Metaclusters = col_fun), annotation_name_rot=45, 
+                            annotation_name_gp=gpar(fontsize=25),gp = gpar(col = "black"), 
+                            which='row', show_legend = FALSE)
+
+metaclusters_2 = Heatmap(m, name = "Scaled expression",border='black',
+                                  cluster_columns = FALSE,
+                                  show_column_dend = FALSE,
+                                  cluster_rows = FALSE,
+                                  show_row_dend = FALSE,
+                                  column_names_rot = 45,
+                                  column_names_centered = FALSE,
+                                  show_column_names = TRUE,
+                                  row_title_gp = gpar(fontsize = 23), #23
+                                  row_names_gp = gpar(fontsize = 25),
+                                  column_names_gp = gpar(fontsize = 25),
+                                  right_annotation = ha_right,
+                                  left_annotation = ha_left,
+                                  rect_gp = gpar(col = "white", lwd = 2),
+                                  col = colorRamp2(c(-1, 0, 2), hcl_palette='viridis'),
+                                  heatmap_legend_param = list(at = c(-1:2), legend_width = unit(6,"cm"),
+                                                              direction="horizontal", title_gp = gpar(fontsize=12),
+                                                              title_position = "topcenter",
+                                                              labels_gp = gpar(fontsize=12)),
+                                  column_names_side = "bottom",
+                                  row_names_side = 'left',
+                                  height = unit(8, "cm"),
+                                  width = unit(20,"cm"))
+
+draw(metaclusters_2, heatmap_legend_side = "top")
+```
+
+PROCESSED 
+
+```{r}
+
+markers_to_include = c('aSMA', 'CD29','Ecad', 'CD31', 'CD3', 'CD4', 'CD8', 'B220', 'CD11b', 'CD161', 'Ly6G', 'F480', 'CD68', 'CD206', 'CD11c', 'MHCII' )
+
+marker_expression <- data.frame(t(assay(processed_sce[markers_to_include,], "exprs")))
+marker_expression$cellID <- rownames(marker_expression)
+dat <- data.frame(colData(processed_sce)[,"Clusters"])
+
+colnames(dat) = "Clusters"
+dat$cellID <- rownames(marker_expression)
+dat <- left_join(dat, marker_expression)
+dat$cellID <- NULL
+head(dat)
+
+# Re-ordering column markers
+htmap_col_order <- c('Clusters', 'aSMA', 'CD29','Ecad', 'CD31', 'CD3', 'CD4', 'CD8', 'B220', 'CD11b', 'CD161', 'Ly6G', 'F480', 'CD68', 'CD206', 'CD11c', 'MHCII' )
+dat <- dat[, htmap_col_order]
+
+dat_aggr <- dat %>%
+  group_by(Clusters) %>%
+  summarise_all(funs(median))
+
+dat_sum <- dat %>%
+  group_by(Clusters) %>%
+  dplyr::summarise(n=n())
+
+rownames(dat_sum) = dat_sum$Clusters
+dat_sum = dat_sum[c('Other non-immune', 'Myofibroblasts', 'Epithelial cells', 'Endothelial cells', 'CD4+ T-cells', 'CD8+ T-cells', 'B cells', 'PMN', 'Macrophages', 'Dendritic cells'),]
+
+dat_sum <- data.frame(t(dat_sum))
+m <- as.matrix((dat_aggr[,-c(1)]))
+rownames(m) <- dat_aggr$Clusters
+
+m = m[c('Other non-immune', 'Myofibroblasts', 'Epithelial cells', 'Endothelial cells', 'CD4+ T-cells', 'CD8+ T-cells', 'B cells', 'PMN', 'Macrophages', 'Dendritic cells'),]
+
+ha_right <- rowAnnotation(" " = anno_barplot((as.numeric(dat_sum[2,])),
+                                                     add_numbers = TRUE,numbers_gp = gpar(fontsize = 20),
+                                                     which = "row",
+                                                     numbers_rot=0,
+                                                     ylim=c(0,300000),
+                                                     axis=FALSE,
+                                                     border=FALSE,
+                                                     width = unit(3, "cm")))
+
+
+col_fun = colorRamp2(c(1,2,3,4,5,6,7,8,9,10), 
+                     c("lightblue","green","#FFEA00","#313695",
+                        "#C04000","orange","#bf812d","#CCCCFF","#0096FF","#ae017e"))
+ha_left = HeatmapAnnotation(Metaclusters = 1:10, col = list(Metaclusters = col_fun), annotation_name_rot=45, 
+                            annotation_name_gp=gpar(fontsize=25),gp = gpar(col = "black"), 
+                            which='row', show_legend = FALSE)
+
+metaclusters_2 = Heatmap(m, name = "Scaled expression",border='black',
+                                  cluster_columns = FALSE,
+                                  show_column_dend = FALSE,
+                                  cluster_rows = FALSE,
+                                  show_row_dend = FALSE,
+                                  column_names_rot = 45,
+                                  column_names_centered = FALSE,
+                                  show_column_names = TRUE,
+                                  row_title_gp = gpar(fontsize = 23), #23
+                                  row_names_gp = gpar(fontsize = 25),
+                                  column_names_gp = gpar(fontsize = 25),
+                                  right_annotation = ha_right,
+                                  left_annotation = ha_left,
+                                  rect_gp = gpar(col = "white", lwd = 2),
+                                  col = colorRamp2(c(-1, 0, 2), hcl_palette='viridis'),
+                                  heatmap_legend_param = list(at = c(-1:2), legend_width = unit(6,"cm"),
+                                                              direction="horizontal", title_gp = gpar(fontsize=12),
+                                                              title_position = "topcenter",
+                                                              labels_gp = gpar(fontsize=12)),
+                                  column_names_side = "bottom",
+                                  row_names_side = 'left',
+                                  height = unit(8, "cm"),
+                                  width = unit(20,"cm"))
+
+draw(metaclusters_2, heatmap_legend_side = "top")
+```
+
+```{r}
+colData(sce_combined[,sce_combined$Data=='Raw'])
+data_raw = cbind(as.data.frame(colData(sce_combined[,sce_combined$Data=='Raw'])$sample_id), as.data.frame(colData(sce_combined[,sce_combined$Data=='Raw'])$ObjectNumber))
+colnames(data_raw) = c('ImgID','CellID')
+
+head(data_raw)
+
+data_raw$aSMA = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[1,]
+data_raw$Ecad = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[2,]
+data_raw$S100A9 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[3,]
+data_raw$F480 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[4,]
+data_raw$Ly6G = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[5,]
+data_raw$CD68 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[6,]
+data_raw$MHCII = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[7,]
+data_raw$CD206 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[8,]
+data_raw$CD11b = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[9,]
+data_raw$S100A4 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[10,]
+data_raw$CD29 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[11,]
+data_raw$PDPN = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[12,]
+data_raw$CD31 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[13,]
+data_raw$K14 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[14,]
+data_raw$Keratin = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[15,]
+data_raw$Vimentin = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[16,]
+data_raw$Arg1 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[17,]
+data_raw$CD11c = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[18,]
+data_raw$B220 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[19,]
+data_raw$CD3e = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[20,]
+data_raw$CD4 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[21,]
+data_raw$CD8a = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[22,]
+data_raw$CD161 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[23,]
+data_raw$Foxp3 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[24,]
+data_raw$CD86 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[25,]
+data_raw$GranzymeB = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[26,]
+data_raw$CD45 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[27,]
+data_raw$PDL1 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[28,]
+data_raw$PD1 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[29,]
+data_raw$Ki67 = assay(sce_combined[,sce_combined$Data=='Raw'], "z-exprs")[30,]
+data_raw$group = colData(sce_combined[,sce_combined$Data=='Raw'])$group
+data_raw$Clusters = sce_combined[,sce_combined$Data=='Raw']$Clusters
+data_raw$Subcluster = sce_combined[,sce_combined$Data=='Raw']$Subcluster
+data_raw$ROI = sce_combined[,sce_combined$Data=='Raw']$sample_id
+head(data_raw)
+dim(data_raw)
+
+colData(sce_combined[,sce_combined$Data=='Pre-processed'])
+data_processed = cbind(as.data.frame(colData(sce_combined[,sce_combined$Data=='Pre-processed'])$sample_id), as.data.frame(colData(sce_combined[,sce_combined$Data=='Pre-processed'])$ObjectNumber))
+colnames(data_processed) = c('ImgID','CellID')
+
+head(data_processed)
+
+data_processed$aSMA = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[1,]
+data_processed$Ecad = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[2,]
+data_processed$S100A9 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[3,]
+data_processed$F480 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[4,]
+data_processed$Ly6G = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[5,]
+data_processed$CD68 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[6,]
+data_processed$MHCII = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[7,]
+data_processed$CD206 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[8,]
+data_processed$CD11b = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[9,]
+data_processed$S100A4 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[10,]
+data_processed$CD29 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[11,]
+data_processed$PDPN = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[12,]
+data_processed$CD31 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[13,]
+data_processed$K14 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[14,]
+data_processed$Keratin = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[15,]
+data_processed$Vimentin = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[16,]
+data_processed$Arg1 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[17,]
+data_processed$CD11c = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[18,]
+data_processed$B220 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[19,]
+data_processed$CD3e = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[20,]
+data_processed$CD4 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[21,]
+data_processed$CD8a = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[22,]
+data_processed$CD161 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[23,]
+data_processed$Foxp3 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[24,]
+data_processed$CD86 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[25,]
+data_processed$GranzymeB = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[26,]
+data_processed$CD45 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[27,]
+data_processed$PDL1 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[28,]
+data_processed$PD1 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[29,]
+data_processed$Ki67 = assay(sce_combined[,sce_combined$Data=='Pre-processed'], "z-exprs")[30,]
+data_processed$group = colData(sce_combined[,sce_combined$Data=='Pre-processed'])$group
+data_processed$Clusters = sce_combined[,sce_combined$Data=='Pre-processed']$Clusters
+data_processed$Subcluster = sce_combined[,sce_combined$Data=='Pre-processed']$Subcluster
+data_processed$ROI = sce_combined[,sce_combined$Data=='Pre-processed']$sample_id
+head(data_processed)
+dim(data_processed)
+```
+
+# METACLUSTER COMPARISON
+
+```{r}
+#################################################
+# Calculate median marker expression by Cluster #
+#################################################
+
+data_raw_median = data_raw %>% group_by(Clusters) %>% 
+  dplyr::summarize(aSMA=median(aSMA),Ecad=median(Ecad),S100A9=median(S100A9),F480=median(F480),
+                   Ly6G=median(Ly6G),CD68=median(CD68),MHCII=median(MHCII),CD206=median(CD206),
+                   CD11b=median(CD11b),S100A4=median(S100A4),CD29=median(CD29),PDPN=median(PDPN),
+                   CD31=median(CD31),K14=median(K14),Keratin=median(Keratin),
+                   Vimentin=median(Vimentin),Arg1=median(Arg1),CD11c=median(CD11c),B220=median(B220),
+                   CD3e=median(CD3e),CD4=median(CD4),CD8a=median(CD8a),CD161=median(CD161),Foxp3=median(Foxp3),
+                   CD86=median(CD86),GranzymeB=median(GranzymeB),CD45=median(CD45),PDL1=median(PDL1),
+                   PD1=median(PD1),Ki67=median(Ki67))
+head(data_raw_median)
+
+data_raw_median.melt = reshape2::melt(data_raw_median, id.vars = c('Clusters'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_processed_median = data_processed %>% group_by(Clusters) %>% 
+  dplyr::summarize(aSMA=median(aSMA),Ecad=median(Ecad),S100A9=median(S100A9),F480=median(F480),
+                   Ly6G=median(Ly6G),CD68=median(CD68),MHCII=median(MHCII),CD206=median(CD206),
+                   CD11b=median(CD11b),S100A4=median(S100A4),CD29=median(CD29),PDPN=median(PDPN),
+                   CD31=median(CD31),K14=median(K14),Keratin=median(Keratin),
+                   Vimentin=median(Vimentin),Arg1=median(Arg1),CD11c=median(CD11c),B220=median(B220),
+                   CD3e=median(CD3e),CD4=median(CD4),CD8a=median(CD8a),CD161=median(CD161),Foxp3=median(Foxp3),
+                   CD86=median(CD86),GranzymeB=median(GranzymeB),CD45=median(CD45),PDL1=median(PDL1),
+                   PD1=median(PD1),Ki67=median(Ki67))
+head(data_processed_median)
+
+data_processed_median.melt = reshape2::melt(data_processed_median, id.vars = c('Clusters'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_median = merge(data_raw_median.melt,data_processed_median.melt,by=c('Clusters','variable'))
+head(data_median)
+data_median$FC = data_median$value.y - data_median$value.x
+head(data_median)
+
+data_median$Relative_Change = (data_median$value.y - data_median$value.x)/data_median$value.x
+head(data_median)
+
+data_median = data_median %>% mutate(Color = case_when(FC > 0 ~ 'UP',
+                                                 FC < 0 ~ 'DOWN',
+                                                 FC == 0 ~ 'NONE'))
+
+data_median$Clusters = factor(data_median$Clusters,
+                           levels=c('Other non-immune','Endothelial cells','Epithelial cells','PMN','Dendritic cells',
+                                    'B cells','Myofibroblasts','Macrophages','CD8+ T-cells','CD4+ T-cells'))
+
+data_median$variable = factor(data_median$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+# Expression fold-change per patient
+ggplot(data_median, 
+       aes(variable,Clusters, fill = Color, size = abs(FC))) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_fill_manual(values = c("#313695","#FFEA00")) +
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        axis.text=element_text(size=20),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Absolute Median Fold Change", fill = "Expression", x = NULL, y = NULL)
+
+
+###################################################################################################
+# For each metacluster: Calculate percentage of each marker that has a positive scaled expression #
+###################################################################################################
+
+data_raw_sum = data_raw %>% group_by(Clusters) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_raw_sum.melt = reshape2::melt(data_raw_sum, id.vars = c('Clusters'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_raw_sum.melt$Perc_Positive = data_raw_sum.melt$value / dim(raw_sce)[2] * 100
+
+data_processed_sum = data_processed %>% group_by(Clusters) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_processed_sum.melt = reshape2::melt(data_processed_sum, id.vars = c('Clusters'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_processed_sum.melt$Perc_Positive = data_processed_sum.melt$value / dim(processed_sce)[2] * 100
+
+data_sum = merge(data_raw_sum.melt,data_processed_sum.melt,by=c('Clusters','variable'))
+head(data_sum)
+
+data_sum$Relative_Change = (data_sum$Perc_Positive.y - data_sum$Perc_Positive.x)/data_sum$Perc_Positive.x
+head(data_sum)
+
+data_sum$Clusters = factor(data_sum$Clusters,
+                           levels=c('Other non-immune','Endothelial cells','Epithelial cells','PMN','Dendritic cells',
+                                    'B cells','Myofibroblasts','Macrophages','CD8+ T-cells','CD4+ T-cells'))
+
+data_sum$variable = factor(data_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+# Positive marker expression by cluster, with relative change between raw and pre-processed
+ggplot(data_sum, 
+       aes(Clusters,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(3, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=18),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  coord_flip() +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+#############################################################################################################
+# For each metacluster: Calculate ratio of  positive marker expression in one cluster vs all other clusters #
+#############################################################################################################
+
+head(data_raw_sum.melt) # value here is number of cells that have a positive expression of that corresponding marker
+
+data_raw_sum.melt_total = data_raw_sum.melt %>% group_by(variable) %>% dplyr::summarize(TotalPositive = sum(value))
+head(data_raw_sum.melt_total)
+
+data_raw_sum.ratio = merge(data_raw_sum.melt_total,data_raw_sum.melt,by='variable')
+data_raw_sum.ratio[5] = NULL
+data_raw_sum.ratio$Ratio = data_raw_sum.ratio$value / data_raw_sum.ratio$TotalPositive
+
+data_raw_sum.ratio_info = data_raw_sum.ratio[,c('variable','Clusters','Ratio')]
+colnames(data_raw_sum.ratio_info) = c('variable','Clusters','Ratio_Raw')
+
+
+head(data_processed_sum.melt) # value here is number of cells that have a positive expression of that corresponding marker
+
+data_processed_sum.melt_total = data_processed_sum.melt %>% group_by(variable) %>% dplyr::summarize(TotalPositive = sum(value))
+
+data_processed_sum.ratio = merge(data_processed_sum.melt_total,data_processed_sum.melt,by='variable')
+data_processed_sum.ratio[5] = NULL
+data_processed_sum.ratio$Ratio = data_processed_sum.ratio$value / data_processed_sum.ratio$TotalPositive
+
+data_processed_sum.ratio_info = data_processed_sum.ratio[,c('variable','Clusters','Ratio')]
+colnames(data_processed_sum.ratio_info) = c('variable','Clusters','Ratio_Processed')
+
+data_ratio = merge(data_raw_sum.ratio_info,data_processed_sum.ratio_info, by=c('variable','Clusters'))
+data_ratio$Ratio_Relative_Change = (data_ratio$Ratio_Processed - data_ratio$Ratio_Raw)/data_ratio$Ratio_Raw
+
+data_ratio = data_ratio %>% mutate(Color = case_when(Ratio_Relative_Change > 0 ~ 'UP',
+                                                 Ratio_Relative_Change < 0 ~ 'DOWN',
+                                                 Ratio_Relative_Change == 0 ~ 'NONE'))
+
+write_csv(data_ratio, "MICE_Metaclusters_ratio_specificity.csv")
+
+data_ratio$Clusters = factor(data_ratio$Clusters,
+                           levels=c('Other non-immune','Endothelial cells','Epithelial cells','PMN','Dendritic cells',
+                                    'B cells','Myofibroblasts','Macrophages','CD8+ T-cells','CD4+ T-cells'))
+
+data_ratio$variable = factor(data_ratio$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+ggplot(data = (data_ratio %>% filter(variable %in% c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','CD11c',
+                                                     'aSMA','Ecad','CD29','PDPN','K14'))),
+                       aes(x = Clusters, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=6) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+ggplot(data = (data_ratio %>% filter(variable %in% c('S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                                     'Keratin','CD31','Ki67'))),
+                       aes(x = Clusters, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=6) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+ggplot(data = (data_ratio %>% filter(variable %in% c('Ly6G','S100A4','Vimentin'))),
+                       aes(x = Clusters, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=5) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+ggplot(data = (data_ratio %>% filter(variable %in% c('CD161','PD1','B220','Ly6G'))),
+                       aes(x = Clusters, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=5) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+# Ratio of each marker per metacluster; flipped
+
+data_ratio$Clusters = factor(data_ratio$Clusters,
+                           levels=c('CD4+ T-cells','CD8+ T-cells','Macrophages','Myofibroblasts','B cells',
+                                    'Dendritic cells','PMN','Epithelial cells','Endothelial cells','Other non-immune'))
+
+ggplot(data = data_ratio,
+       aes(x = variable, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~Clusters, ncol=5) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.9,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5)) +
+  scale_x_discrete(limits=rev(levels(data_ratio$variable))) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+
+##########################################
+# Count of cells total (relative change) #
+##########################################
+
+cells_per_Patient_raw = data_raw %>% subset(select=c('ROI')) %>% group_by(ROI) %>% 
+  dplyr::summarise(n = n())
+
+cellType_per_Patient_raw = data_raw %>% subset(select=c('ROI','Clusters')) %>%
+  group_by(ROI,Clusters) %>% dplyr::summarise(n = n())
+
+cells_Patient_raw = merge(cells_per_Patient_raw, cellType_per_Patient_raw, all.x=TRUE, by='ROI')
+head(cells_Patient_raw)
+colnames(cells_Patient_raw) = c('ROI','CellTotal','Clusters','Count')
+cells_Patient_raw$Perc_CellType_Patient = cells_Patient_raw$Count / cells_Patient_raw$CellTotal
+head(cells_Patient_raw)
+
+cells_Patient_raw_md = cells_Patient_raw %>% group_by(Clusters) %>% dplyr::summarise(Median = median(Perc_CellType_Patient))
+head(cells_Patient_raw_md)
+
+
+cells_per_Patient_processed = data_processed %>% subset(select=c('ROI')) %>% group_by(ROI) %>% 
+  dplyr::summarise(n = n())
+
+cellType_per_Patient_processed = data_processed %>% subset(select=c('ROI','Clusters')) %>%
+  group_by(ROI,Clusters) %>% dplyr::summarise(n = n())
+
+cells_Patient_processed = merge(cells_per_Patient_processed, cellType_per_Patient_processed, all.x=TRUE, by='ROI')
+head(cells_Patient_processed)
+colnames(cells_Patient_processed) = c('ROI','CellTotal','Clusters','Count')
+cells_Patient_processed$Perc_CellType_Patient = cells_Patient_processed$Count / cells_Patient_processed$CellTotal
+head(cells_Patient_processed)
+
+cells_Patient_processed_md = cells_Patient_processed %>% group_by(Clusters) %>% dplyr::summarise(Median = median(Perc_CellType_Patient))
+head(cells_Patient_processed_md)
+
+
+data_Patient_median = merge(cells_Patient_raw_md,cells_Patient_processed_md,by=c('Clusters'))
+head(data_Patient_median)
+
+data_Patient_median$Relative_Change = (data_Patient_median$Median.y -
+                                         data_Patient_median$Median.x)/data_Patient_median$Median.x
+head(data_Patient_median)
+
+data_Patient_median$Clusters = factor(data_Patient_median$Clusters,
+                           levels=c('Other non-immune','Endothelial cells','Epithelial cells','PMN','Dendritic cells',
+                                    'B cells','Myofibroblasts','Macrophages','CD8+ T-cells','CD4+ T-cells'))
+
+ggplot(data = data_Patient_median,
+                       aes(x = Clusters, y = Relative_Change,
+                           fill=Clusters)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  ggtitle(NULL) + xlab("") + ylab("Relative change\nafter pre-processing(%)") +
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=25),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1.2,
+        strip.text=element_text(size = 34, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  coord_flip() +
+  scale_fill_manual(values = c("lightblue","#313695","#FFEA00","#CCCCFF","#ae017e",
+                               "#bf812d","green","#0096FF","orange","#C04000"))
+```
+
+# SUBCLUSTER COMPARISON
+
+```{r}
+##########################################
+# Count of cells total (relative change) #
+##########################################
+
+cells_per_Patient_raw = data_raw %>% subset(select=c('ROI')) %>% group_by(ROI) %>% 
+  dplyr::summarise(n = n())
+
+cellType_per_Patient_raw = data_raw %>% subset(select=c('ROI','Subcluster')) %>%
+  group_by(ROI,Subcluster) %>% dplyr::summarise(n = n())
+
+cells_Patient_raw = merge(cells_per_Patient_raw, cellType_per_Patient_raw, all.x=TRUE, by='ROI')
+head(cells_Patient_raw)
+colnames(cells_Patient_raw) = c('ROI','CellTotal','Subcluster','Count')
+cells_Patient_raw$Perc_CellType_Patient = cells_Patient_raw$Count / cells_Patient_raw$CellTotal
+head(cells_Patient_raw)
+
+cells_Patient_raw_md = cells_Patient_raw %>% group_by(Subcluster) %>% dplyr::summarise(Median = median(Perc_CellType_Patient))
+head(cells_Patient_raw_md)
+
+
+cells_per_Patient_processed = data_processed %>% subset(select=c('ROI')) %>% group_by(ROI) %>% 
+  dplyr::summarise(n = n())
+
+cellType_per_Patient_processed = data_processed %>% subset(select=c('ROI','Subcluster')) %>%
+  group_by(ROI,Subcluster) %>% dplyr::summarise(n = n())
+
+cells_Patient_processed = merge(cells_per_Patient_processed, cellType_per_Patient_processed, all.x=TRUE, by='ROI')
+head(cells_Patient_processed)
+colnames(cells_Patient_processed) = c('ROI','CellTotal','Subcluster','Count')
+cells_Patient_processed$Perc_CellType_Patient = cells_Patient_processed$Count / cells_Patient_processed$CellTotal
+head(cells_Patient_processed)
+
+cells_Patient_processed_md = cells_Patient_processed %>% group_by(Subcluster) %>% dplyr::summarise(Median = median(Perc_CellType_Patient))
+head(cells_Patient_processed_md)
+
+
+data_Patient_median = merge(cells_Patient_raw_md,cells_Patient_processed_md,by=c('Subcluster'),all=T)
+head(data_Patient_median)
+
+data_Patient_median$Relative_Change = (data_Patient_median$Median.y -
+                                         data_Patient_median$Median.x)/data_Patient_median$Median.x
+head(data_Patient_median)
+
+data_Patient_median.melt = reshape2::melt(data_Patient_median, id.vars = c('Subcluster'), 
+                           measure.vars = c('Median.x','Median.y'))
+
+data_Patient_median.melt$Subcluster = factor(data_Patient_median.melt$Subcluster,
+                           levels=c("Mesenchymal cells","Lymphatic Endothelial cells","Endothelial cells","Epithelial cells",
+                                    "PMN","CD86+ Dendritic cells","Proliferating Dendritic cells",
+                                    "PDL1+ Dendritic cells","Dendritic cells",
+                              "PDL1+ B cells","Proliferating B cells","B cells","Myofibroblasts",
+                              "PDL1+ M2 macrophages","CD86+ M2 macrophages","S100A4+ CD86+ M2 macrophages",
+                              "S100A4+ M2 macrophages","S100A9+ M2 macrophages","M2 macrophages",
+                             "Granzyme+ M1 macrophages","CD86+ M1 macrophages",
+                             "S100A4+ M1 macrophages","S100A9+ M1 macrophages",
+                             "Proliferating PDL1+ M1 macrophages","M1 macrophages",
+                             "Cytotoxic T-cells","PD1+ CD8+ T-cells","Proliferating PD1+ CD8+ T-cells",
+                             "Proliferating CD8+ T-cells","CD3+ CD8+ T-cells",
+                           "CD4+ NKT-cells","PD1+ CD4+ T-cells","CD4+ Tregs","CD3+ CD4+ T-cells"))
+
+ggplot(data = data_Patient_median.melt,
+                       aes(x = Subcluster, y = value,
+                           fill=variable)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  ggtitle(NULL) + xlab("") + ylab("Median cell percentage per patient") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        legend.title=element_blank(),
+        legend.text=element_text(size=15),
+        aspect.ratio=3,
+        panel.grid=element_blank(),
+        strip.text=element_text(size = 34, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_x_discrete(limits=(levels(data_Patient_median.melt$Subcluster))) +
+  coord_flip() +
+  scale_fill_manual(values = c("black","red"))
+                              
+
+####################################################
+# Calculate median marker expression by Subcluster #
+####################################################
+
+data_raw_median = data_raw %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=median(aSMA),Ecad=median(Ecad),S100A9=median(S100A9),F480=median(F480),
+                   Ly6G=median(Ly6G),CD68=median(CD68),MHCII=median(MHCII),CD206=median(CD206),
+                   CD11b=median(CD11b),S100A4=median(S100A4),CD29=median(CD29),PDPN=median(PDPN),
+                   CD31=median(CD31),K14=median(K14),Keratin=median(Keratin),
+                   Vimentin=median(Vimentin),Arg1=median(Arg1),CD11c=median(CD11c),B220=median(B220),
+                   CD3e=median(CD3e),CD4=median(CD4),CD8a=median(CD8a),CD161=median(CD161),Foxp3=median(Foxp3),
+                   CD86=median(CD86),GranzymeB=median(GranzymeB),CD45=median(CD45),PDL1=median(PDL1),
+                   PD1=median(PD1),Ki67=median(Ki67))
+head(data_raw_median)
+
+data_raw_median.melt = reshape2::melt(data_raw_median, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_processed_median = data_processed %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=median(aSMA),Ecad=median(Ecad),S100A9=median(S100A9),F480=median(F480),
+                   Ly6G=median(Ly6G),CD68=median(CD68),MHCII=median(MHCII),CD206=median(CD206),
+                   CD11b=median(CD11b),S100A4=median(S100A4),CD29=median(CD29),PDPN=median(PDPN),
+                   CD31=median(CD31),K14=median(K14),Keratin=median(Keratin),
+                   Vimentin=median(Vimentin),Arg1=median(Arg1),CD11c=median(CD11c),B220=median(B220),
+                   CD3e=median(CD3e),CD4=median(CD4),CD8a=median(CD8a),CD161=median(CD161),Foxp3=median(Foxp3),
+                   CD86=median(CD86),GranzymeB=median(GranzymeB),CD45=median(CD45),PDL1=median(PDL1),
+                   PD1=median(PD1),Ki67=median(Ki67))
+head(data_processed_median)
+
+data_processed_median.melt = reshape2::melt(data_processed_median, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_median = merge(data_raw_median.melt,data_processed_median.melt,by=c('Subcluster','variable'))
+head(data_median)
+data_median$FC = data_median$value.y - data_median$value.x
+head(data_median)
+
+data_median = data_median %>% mutate(Color = case_when(FC > 0 ~ 'UP',
+                                                 FC < 0 ~ 'DOWN',
+                                                 FC == 0 ~ 'NONE'))
+
+data_median$variable = factor(data_median$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+unique(data_median$Subcluster)
+data_median$Subcluster = factor(data_median$Subcluster,
+                           levels=c("Mesenchymal cells","Lymphatic Endothelial cells","Endothelial cells","Epithelial cells",
+                                    "PMN","PDL1+ Dendritic cells","Dendritic cells",
+                              "PDL1+ B cells","Proliferating B cells","B cells","Myofibroblasts",
+                              "S100A9+ M2 macrophages","M2 macrophages",
+                             "CD86+ M1 macrophages","S100A9+ M1 macrophages",
+                             "Proliferating PDL1+ M1 macrophages","M1 macrophages",
+                             "Cytotoxic T-cells","PD1+ CD8+ T-cells","Proliferating CD8+ T-cells","CD3+ CD8+ T-cells",
+                           "CD4+ NKT-cells","PD1+ CD4+ T-cells","CD4+ Tregs","CD3+ CD4+ T-cells"))
+
+# Expression fold-change per patient
+ggplot(data_median, 
+       aes(variable,Subcluster, fill = Color, size = abs(FC))) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_fill_manual(values = c("#313695","#FFEA00")) + 
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Absolute Median Fold Change", fill = "Expression", x = NULL, y = NULL)
+
+
+##################################################################################################
+# For each subcluster: Calculate percentage of each marker that has a positive scaled expression #
+##################################################################################################
+
+data_raw_sum = data_raw %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_raw_sum.melt = reshape2::melt(data_raw_sum, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_raw_sum.melt$Perc_Positive = data_raw_sum.melt$value / dim(raw_sce)[2] * 100
+
+data_processed_sum = data_processed %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_processed_sum.melt = reshape2::melt(data_processed_sum, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+data_processed_sum.melt$Perc_Positive = data_processed_sum.melt$value / dim(processed_sce)[2] * 100
+
+data_sum = merge(data_raw_sum.melt,data_processed_sum.melt,by=c('Subcluster','variable'))
+head(data_sum)
+
+data_sum$Relative_Change = (data_sum$Perc_Positive.y - data_sum$Perc_Positive.x)/data_sum$Perc_Positive.x
+head(data_sum)
+
+data_sum$Subcluster = factor(data_sum$Subcluster,
+                           levels=c("Mesenchymal cells","Lymphatic Endothelial cells","Endothelial cells","Epithelial cells",
+                                    "PMN","PDL1+ Dendritic cells","Dendritic cells",
+                              "PDL1+ B cells","Proliferating B cells","B cells","Myofibroblasts",
+                              "S100A9+ M2 macrophages","M2 macrophages",
+                             "CD86+ M1 macrophages","S100A9+ M1 macrophages",
+                             "Proliferating PDL1+ M1 macrophages","M1 macrophages",
+                             "Cytotoxic T-cells","PD1+ CD8+ T-cells","Proliferating CD8+ T-cells","CD3+ CD8+ T-cells",
+                           "CD4+ NKT-cells","PD1+ CD4+ T-cells","CD4+ Tregs","CD3+ CD4+ T-cells"))
+
+data_sum$variable = factor(data_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+# Positive marker expression by cluster, with relative change between raw and pre-processed
+ggplot(data_sum, 
+       aes(Subcluster,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(3, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=18),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  coord_flip() +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+## T-CELLS ONLY
+cd4_raw = data_raw_sum.melt %>% 
+  filter(Subcluster %in% unique(data_raw[data_raw$Clusters%in%c('CD4+ T-cells','CD8+ T-cells'),]$Subcluster))
+
+cd4_raw$Perc_Positive = cd4_raw$value /  sum(cd4_raw$value) * 100
+
+cd4_processed = data_processed_sum.melt %>% 
+  filter(Subcluster %in% unique(data_processed[data_processed$Clusters%in%c('CD4+ T-cells','CD8+ T-cells'),]$Subcluster))
+
+cd4_processed$Perc_Positive = cd4_processed$value /  sum(cd4_processed$value) * 100
+
+cd4_sum = merge(cd4_raw,cd4_processed,by=c('Subcluster','variable'),all=T)
+head(cd4_sum)
+
+cd4_sum$Relative_Change = (cd4_sum$Perc_Positive.y - cd4_sum$Perc_Positive.x)/cd4_sum$Perc_Positive.x
+head(cd4_sum)
+
+cd4_sum$Subcluster = factor(cd4_sum$Subcluster,
+                               levels=c("CD3+ CD4+ T-cells","CD4+ Tregs","PD1+ CD4+ T-cells","CD4+ NKT-cells",
+                                        "CD3+ CD8+ T-cells","Proliferating CD8+ T-cells","PD1+ CD8+ T-cells",
+                                        "Cytotoxic T-cells"))
+
+cd4_sum$variable = factor(cd4_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+
+ggplot((cd4_sum %>% filter(variable %in% c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','CD161','Ki67')) %>%
+          filter(!is.na(Relative_Change))), 
+       aes(Subcluster,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(5, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  scale_y_discrete(limits=(levels(cd4_sum$Subcluster))) +
+  coord_flip() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+## MACRO
+macro_raw = data_raw_sum.melt %>% 
+  filter(Subcluster %in% unique(data_raw[data_raw$Clusters%in%c('Macrophages'),]$Subcluster))
+
+macro_raw$Perc_Positive = macro_raw$value /  sum(macro_raw$value) * 100
+
+macro_processed = data_processed_sum.melt %>% 
+  filter(Subcluster %in% unique(data_processed[data_processed$Clusters%in%c('Macrophages'),]$Subcluster))
+
+macro_processed$Perc_Positive = macro_processed$value /  sum(macro_processed$value) * 100
+
+macro_sum = merge(macro_raw,macro_processed,by=c('Subcluster','variable'),all=T)
+head(macro_sum)
+
+macro_sum$Relative_Change = (macro_sum$Perc_Positive.y - macro_sum$Perc_Positive.x)/macro_sum$Perc_Positive.x
+head(macro_sum)
+
+macro_sum$Subcluster = factor(macro_sum$Subcluster,
+                               levels=c("M1 macrophages","Proliferating PDL1+ M1 macrophages","S100A9+ M1 macrophages",
+                                        "CD86+ M1 macrophages","M2 macrophages","S100A9+ M2 macrophages"))
+
+macro_sum$variable = factor(macro_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','CD161',
+                                      'F480','CD68','CD206','MHCII','CD11b','S100A9',
+                                      'S100A4','CD86','PDL1','CD11c','B220','PD1','Ki67',
+                                      
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Arg1',
+                                      'Ly6G','Vimentin'))
+
+ggplot((macro_sum %>% filter(variable %in% c('F480','CD68','CD206','MHCII','CD11b','S100A9',
+                                      'S100A4','CD86','PDL1','Ki67')) %>%
+          filter(!is.na(Relative_Change))), 
+       aes(Subcluster, variable,fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(5, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  scale_y_discrete(limits=(levels(macro_sum$Subcluster))) +
+  coord_flip() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+## B CELLS
+bcell_raw = data_raw_sum.melt %>% 
+  filter(Subcluster %in% unique(data_raw[data_raw$Clusters%in%c('B cells'),]$Subcluster))
+
+bcell_raw$Perc_Positive = bcell_raw$value /  sum(bcell_raw$value) * 100
+
+bcell_processed = data_processed_sum.melt %>% 
+  filter(Subcluster %in% unique(data_processed[data_processed$Clusters%in%c('B cells'),]$Subcluster))
+
+bcell_processed$Perc_Positive = bcell_processed$value /  sum(bcell_processed$value) * 100
+
+bcell_sum = merge(bcell_raw,bcell_processed,by=c('Subcluster','variable'),all=T)
+head(bcell_sum)
+
+bcell_sum$Relative_Change = (bcell_sum$Perc_Positive.y - bcell_sum$Perc_Positive.x)/bcell_sum$Perc_Positive.x
+head(bcell_sum)
+
+bcell_sum$Subcluster = factor(bcell_sum$Subcluster,
+                               levels=c("B cells","Proliferating B cells","PDL1+ B cells"))
+
+bcell_sum$variable = factor(bcell_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','CD161',
+                                      'F480','CD68','CD206','MHCII','CD11b','S100A9',
+                                      'S100A4','CD86','CD11c','B220','PDL1','PD1','Ki67',
+                                      
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Arg1',
+                                      'Ly6G','Vimentin'))
+
+ggplot((bcell_sum %>% filter(variable %in% c('PDL1','B220','PD1','Ki67')) %>%
+          filter(!is.na(Relative_Change))), 
+       aes(Subcluster,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(5, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  scale_y_discrete(limits=(levels(bcell_sum$Subcluster))) +
+  coord_flip() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+## DC
+dc_raw = data_raw_sum.melt %>% 
+  filter(Subcluster %in% unique(data_raw[data_raw$Clusters%in%c('Dendritic cells'),]$Subcluster))
+
+dc_raw$Perc_Positive = dc_raw$value /  sum(dc_raw$value) * 100
+
+dc_processed = data_processed_sum.melt %>% 
+  filter(Subcluster %in% unique(data_processed[data_processed$Clusters%in%c('Dendritic cells'),]$Subcluster))
+
+dc_processed$Perc_Positive = dc_processed$value /  sum(dc_processed$value) * 100
+
+dc_sum = merge(dc_raw,dc_processed,by=c('Subcluster','variable'),all=T)
+head(dc_sum)
+
+dc_sum$Relative_Change = (dc_sum$Perc_Positive.y - dc_sum$Perc_Positive.x)/dc_sum$Perc_Positive.x
+head(dc_sum)
+
+dc_sum$Subcluster = factor(dc_sum$Subcluster,
+                               levels=c("Dendritic cells","PDL1+ Dendritic cells"))
+
+dc_sum$variable = factor(dc_sum$variable,
+                             levels=c('CD11c','PDL1','PD1','Ki67','CD86','MHCII','S100A9','S100A4',
+                               'CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','CD161',
+                                      'F480','CD68','CD206','CD11b',
+                                      'B220',
+                                      
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Arg1',
+                                      'Ly6G','Vimentin'))
+
+ggplot((dc_sum %>% filter(variable %in% c('MHCII','S100A9','S100A4','CD86','PDL1','CD11c','PD1','Ki67')) %>%
+          filter(!is.na(Relative_Change))), 
+       aes(Subcluster,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(5, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  scale_y_discrete(limits=(levels(dc_sum$Subcluster))) +
+  coord_flip() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+## NON-IMMUNE
+macrobdc_raw = data_raw_sum.melt %>% 
+  filter(Subcluster %in% 
+           unique(data_raw[data_raw$Clusters%in%c('Epithelial cells','Endothelial cells','Other non-immune'),]$Subcluster))
+
+macrobdc_raw$Perc_Positive = macrobdc_raw$value /  sum(macrobdc_raw$value) * 100
+
+macrobdc_processed = data_processed_sum.melt %>% 
+  filter(Subcluster %in% 
+           unique(data_processed[data_processed$Clusters%in%c('Epithelial cells','Endothelial cells','Other non-immune'),]$Subcluster))
+
+macrobdc_processed$Perc_Positive = macrobdc_processed$value /  sum(macrobdc_processed$value) * 100
+
+macrobdc_sum = merge(macrobdc_raw,macrobdc_processed,by=c('Subcluster','variable'),all=T)
+head(macrobdc_sum)
+
+macrobdc_sum$Relative_Change = (macrobdc_sum$Perc_Positive.y - macrobdc_sum$Perc_Positive.x)/macrobdc_sum$Perc_Positive.x
+head(macrobdc_sum)
+
+macrobdc_sum$Subcluster = factor(macrobdc_sum$Subcluster,
+                               levels=c("Epithelial cells","Endothelial cells","Lymphatic Endothelial cells",
+                                        "Mesenchymal cells"))
+
+macrobdc_sum$variable = factor(macrobdc_sum$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','CD161',
+                                      'F480','CD68','CD206','MHCII','CD11b','S100A9',
+                                      'S100A4','CD86','PDL1','CD11c','B220','PD1','Ki67',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Arg1',
+                                      'Ly6G','Vimentin'))
+
+ggplot((macrobdc_sum %>% filter(variable %in% c('aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Arg1',
+                                      'Ly6G','Vimentin')) %>%
+          filter(!is.na(Relative_Change))), 
+       aes(Subcluster,variable, fill = Relative_Change, size = Perc_Positive.y)) +
+  geom_point(shape = 21, stroke = 0) +
+  scale_radius(range = c(5, 15)) +
+  scale_fill_gradient2(high = "red",mid = "gray",low = "blue",midpoint = 0) +
+  theme_bw() +
+  scale_x_discrete(limits=rev(levels(macrobdc_sum$Subcluster))) +
+  coord_flip() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=15),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Positive marker percentage\nin a cell phenotype in\npre-processed data (%)", 
+       fill = "Relative change\nafter pre-processing (%)", x = NULL, y = NULL)
+
+###########################################################################################################
+# For each subcluster: Calculate ratio of positive marker expression in one cluster vs all other clusters #
+###########################################################################################################
+
+data_raw_sum = data_raw %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_raw_sum.melt = reshape2::melt(data_raw_sum, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+
+data_processed_sum = data_processed  %>% group_by(Subcluster) %>% 
+  dplyr::summarize(aSMA=sum(aSMA>0),Ecad=sum(Ecad>0),S100A9=sum(S100A9>0),F480=sum(F480>0),
+                   Ly6G=sum(Ly6G>0),CD68=sum(CD68>0),MHCII=sum(MHCII>0),CD206=sum(CD206>0),
+                   CD11b=sum(CD11b>0),S100A4=sum(S100A4>0),CD29=sum(CD29>0),PDPN=sum(PDPN>0),
+                   CD31=sum(CD31>0),K14=sum(K14>0),Keratin=sum(Keratin>0),
+                   Vimentin=sum(Vimentin>0),Arg1=sum(Arg1>0),CD11c=sum(CD11c>0),B220=sum(B220>0),
+                   CD3e=sum(CD3e>0),CD4=sum(CD4>0),CD8a=sum(CD8a>0),CD161=sum(CD161>0),Foxp3=sum(Foxp3>0),
+                   CD86=sum(CD86>0),GranzymeB=sum(GranzymeB>0),CD45=sum(CD45>0),PDL1=sum(PDL1>0),
+                   PD1=sum(PD1>0),Ki67=sum(Ki67>0))
+
+data_processed_sum.melt = reshape2::melt(data_processed_sum, id.vars = c('Subcluster'), 
+                           measure.vars = c('aSMA','Ecad','S100A9','F480','Ly6G','CD68','MHCII','CD206',
+                                            'CD11b','S100A4','CD29','PDPN','CD31','K14','Keratin','Vimentin',
+                                            'Arg1','CD11c','B220','CD3e','CD4','CD8a','CD161','Foxp3',
+                                            'CD86','GranzymeB','CD45','PDL1','PD1','Ki67'))
+
+head(data_raw_sum.melt) # value here is number of cells that have a positive expression of that corresponding marker
+
+data_raw_sum.melt_total = data_raw_sum.melt %>% group_by(variable) %>% dplyr::summarize(TotalPositive = sum(value))
+head(data_raw_sum.melt_total)
+
+data_raw_sum.ratio = merge(data_raw_sum.melt_total,data_raw_sum.melt,by='variable')
+data_raw_sum.ratio[5] = NULL
+data_raw_sum.ratio$Ratio = data_raw_sum.ratio$value / data_raw_sum.ratio$TotalPositive
+
+data_raw_sum.ratio_info = data_raw_sum.ratio[,c('variable','Subcluster','Ratio')]
+colnames(data_raw_sum.ratio_info) = c('variable','Subcluster','Ratio_Raw')
+
+
+head(data_processed_sum.melt) # value here is number of cells that have a positive expression of that corresponding marker
+
+data_processed_sum.melt_total = data_processed_sum.melt %>% group_by(variable) %>% dplyr::summarize(TotalPositive = sum(value))
+
+data_processed_sum.ratio = merge(data_processed_sum.melt_total,data_processed_sum.melt,by='variable')
+data_processed_sum.ratio[5] = NULL
+data_processed_sum.ratio$Ratio = data_processed_sum.ratio$value / data_processed_sum.ratio$TotalPositive
+
+data_processed_sum.ratio_info = data_processed_sum.ratio[,c('variable','Subcluster','Ratio')]
+colnames(data_processed_sum.ratio_info) = c('variable','Subcluster','Ratio_Processed')
+
+data_ratio = merge(data_raw_sum.ratio_info,data_processed_sum.ratio_info, by=c('variable','Subcluster'))
+data_ratio$Ratio_Relative_Change = (data_ratio$Ratio_Processed - data_ratio$Ratio_Raw)/data_ratio$Ratio_Raw
+
+data_ratio = data_ratio %>% mutate(Color = case_when(Ratio_Relative_Change > 0 ~ 'UP',
+                                                 Ratio_Relative_Change < 0 ~ 'DOWN',
+                                                 Ratio_Relative_Change == 0 ~ 'NONE'))
+
+write_csv(data_ratio, "MICE_subclusters_ratio_specificity.csv")
+
+data_ratio$variable = factor(data_ratio$variable,
+                             levels=c('CD3e','CD4','CD8a','CD45','GranzymeB','Foxp3','PD1','B220','CD161','CD11c',
+                                      'S100A9','F480','CD68','CD206','MHCII','CD11b','Arg1','CD86','PDL1',
+                                      'aSMA','Ecad','CD29','PDPN','K14','Keratin','CD31','Ki67',
+                                      'Ly6G','S100A4','Vimentin'))
+unique(data_ratio$Subcluster)
+
+data_ratio$Subcluster = factor(data_ratio$Subcluster,
+                               levels=c("Mesenchymal cells","Lymphatic Endothelial cells",
+                                        "Endothelial cells","Epithelial cells",
+                                    "PMN","PDL1+ Dendritic cells","Dendritic cells",
+                              "PDL1+ B cells","Proliferating B cells","B cells","Myofibroblasts",
+                              "S100A9+ M2 macrophages","M2 macrophages",
+                             "CD86+ M1 macrophages","S100A9+ M1 macrophages",
+                             "Proliferating PDL1+ M1 macrophages","M1 macrophages",
+                             "Cytotoxic T-cells","PD1+ CD8+ T-cells","Proliferating CD8+ T-cells","CD3+ CD8+ T-cells",
+                           "CD4+ NKT-cells","PD1+ CD4+ T-cells","CD4+ Tregs","CD3+ CD4+ T-cells"))
+
+
+# T-cell markers
+ggplot(data = (data_ratio %>% filter(variable %in% c('PD1','Foxp3','Ki67','GranzymeB','CD161')) %>%
+                 filter(Subcluster %in% c("CD3+ CD4+ T-cells","CD3+ CD8+ T-cells","CD4+ NKT-cells","CD4+ Tregs",
+                                          "PD1+ CD4+ T-cells","PD1+ CD8+ T-cells","Proliferating CD8+ T-cells",
+                                          "Cytotoxic T-cells"))),
+                       aes(x = Subcluster, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=3) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+
+# Macrophage markers
+ggplot(data = (data_ratio %>% filter(variable %in% c('PDL1','CD86','S100A9','S100A4','MHCII','Ki67')) %>%
+                 filter(Subcluster %in% c("CD86+ M1 macrophages","M1 macrophages",
+                                          "M2 macrophages",
+                                          "Proliferating PDL1+ M1 macrophages","S100A9+ M1 macrophages",
+                                          "S100A9+ M2 macrophages"))),
+                       aes(x = Subcluster, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=3) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+# B cell markers
+ggplot(data = (data_ratio %>% filter(variable %in% c('PDL1','Ki67','PD1')) %>%
+                 filter(Subcluster %in% c("B cells","PDL1+ B cells","Proliferating B cells"))),
+                       aes(x = Subcluster, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=3) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text.y=element_text(size=13),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5,size=11)) +
+  scale_y_continuous(breaks=c(0,2,4,6,8,10)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+# DC markers
+ggplot(data = (data_ratio %>% filter(variable %in% c('PDL1','CD86','S100A9','S100A4','MHCII','Ki67')) %>%
+                 filter(Subcluster %in% c("Dendritic cells","PDL1+ Dendritic cells"))),
+                       aes(x = Subcluster, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=3) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=0.8,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+
+
+# Non-immune cells markers
+ggplot(data = (data_ratio %>% filter(variable %in% c('Ecad','CD29','Keratin','K14','PDPN','Arg1')) %>%
+                 filter(Subcluster %in% c("Endothelial cells","Epithelial cells","Lymphatic Endothelial cells",
+                                          "Mesenchymal cells"))),
+                       aes(x = Subcluster, y = Ratio_Relative_Change,
+                           fill=Color)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  facet_wrap(~variable, ncol=3) +
+  ggtitle(NULL) + xlab("") + ylab("Relative change after pre-processing (%)") +
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        panel.grid=element_blank(),
+        legend.position='none',
+        aspect.ratio=1,
+        strip.text=element_text(size = 15, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  scale_y_continuous(breaks=c(-1,0,1),limits=c(-1,1.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color="black", lwd=1) +
+  scale_fill_manual(values = c("gray","orange"))
+```
+
+# QUANTIFY CELLS WITH MIXED PHENOTYPE AS WELL AS NOISE IN DATA (aka labelled as Hepatocytes by exclusion)
+
+RAW
+
+```{r}
+raw_sce
+
+markers_to_include = c('CD31','CD29','aSMA','F480','CD68','CD11b','Ly6G','CD4','B220','CD11c','CD161','CD8a','MMR-CD206', 'CD3e','MHCII', 'Ecad','K14','PD-1','PD-L1','PDPN','Pan-Keratin','S100A9', 'S100A4', 'Foxp3','Granzyme-B', 'Ki-67', 'CD45', 'Vimentin','Arginase-1','CD86')
+
+raw_scaled = as.data.frame((t(assay(raw_sce[rownames(raw_sce) %in% markers_to_include,],'exprs'))))
+head(raw_scaled)
+
+raw_scaled = raw_scaled[,c('CD31','CD29','aSMA','F480','CD68','CD11b','Ly6G','CD4','B220','CD11c','CD161','CD8a','MMR-CD206', 'CD3e','MHCII', 'Ecad','K14','PD-1','PD-L1','PDPN','Pan-Keratin','S100A9', 'S100A4', 'Foxp3','Granzyme-B', 'Ki-67', 'CD45', 'Vimentin','Arginase-1','CD86')] 
+
+head(raw_scaled)
+
+raw_scaled %>% summary()
+
+
+# Identify lineage marker as well as top 3 highest expressing markers for each cell
+maxn = function(n) function(x) base::order(x, decreasing = TRUE)[!is.na(x)][n]
+raw_scaled = raw_scaled %>%
+  mutate(Lineage=apply(.[1:16], 1, function(x) names(x)[maxn(1)(x)]))
+raw_scaled = raw_scaled %>%
+  mutate(Highest=apply(.[1:30], 1, function(x) names(x)[maxn(1)(x)])) # Replace X with total number of markers
+raw_scaled = raw_scaled %>%
+  mutate(Second_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(2)(x)])) # Replace X with total number of markers
+raw_scaled = raw_scaled %>%
+  mutate(Third_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(3)(x)])) # Replace X with total number of markers
+raw_scaled = raw_scaled %>%
+  mutate(Fourth_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(4)(x)])) # Replace X with total number of marker
+raw_scaled = raw_scaled %>%
+  mutate(Fifth_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(5)(x)])) # Replace X with total number of marker
+head(raw_scaled)
+```
+
+PREPROCESSED
+
+```{r}
+processed_sce
+
+markers_to_include = c('CD31','CD29','aSMA','F480','CD68','CD11b','Ly6G','CD4','B220','CD11c','CD161','CD8','CD206', 'CD3','MHCII', 'Ecad','K14','PD1','PDL1','PDPN','PanK','S100A9', 'S100A4', 'Foxp3','GranzymeB', 'Ki67', 'CD45', 'Vimentin','Arg1','CD86')
+
+processed_scaled = as.data.frame((t(assay(processed_sce[rownames(processed_sce) %in% markers_to_include,],'exprs'))))
+head(processed_scaled)
+
+processed_scaled = processed_scaled[,c('CD31','CD29','aSMA','F480','CD68','CD11b','Ly6G','CD4','B220','CD11c','CD161','CD8','CD206', 'CD3','MHCII', 'Ecad','K14','PD1','PDL1','PDPN','PanK','S100A9', 'S100A4', 'Foxp3','GranzymeB', 'Ki67', 'CD45', 'Vimentin','Arg1','CD86')] 
+
+head(processed_scaled)
+
+processed_scaled %>% summary()
+
+
+# Identify lineage marker as well as top 3 highest expressing markers for each cell
+maxn = function(n) function(x) base::order(x, decreasing = TRUE)[!is.na(x)][n]
+processed_scaled = processed_scaled %>%
+  mutate(Lineage=apply(.[1:16], 1, function(x) names(x)[maxn(1)(x)]))
+processed_scaled = processed_scaled %>%
+  mutate(Highest=apply(.[1:30], 1, function(x) names(x)[maxn(1)(x)])) # Replace X with total number of markers
+processed_scaled = processed_scaled %>%
+  mutate(Second_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(2)(x)])) # Replace X with total number of markers
+processed_scaled = processed_scaled %>%
+  mutate(Third_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(3)(x)])) # Replace X with total number of markers
+processed_scaled = processed_scaled %>%
+  mutate(Fourth_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(4)(x)])) # Replace X with total number of marker
+processed_scaled = processed_scaled %>%
+  mutate(Fifth_Highest=apply(.[1:30], 1, function(x) names(x)[maxn(5)(x)])) # Replace X with total number of marker
+head(processed_scaled)
+```
+
+Compare cells with mixed phenotype
+
+```{r}
+###############
+# B & T cells #
+###############
+
+dim(raw_scaled[((raw_scaled$Highest %in% c('CD4','CD8a'))&
+                    ((raw_scaled$Second_Highest == 'B220')))|
+                   ((raw_scaled$Second_Highest %in% c('CD4','CD8a'))&
+                      ((raw_scaled$Highest == 'B220'))),])
+683/125022 # 0.5%
+
+dim(processed_scaled[((processed_scaled$Highest %in% c('CD4','CD8'))&
+                    ((processed_scaled$Second_Highest == 'B220')))|
+                   ((processed_scaled$Second_Highest %in% c('CD4','CD8'))&
+                      ((processed_scaled$Highest == 'B220'))),])
+
+502/125513 # 0.4%
+
+(0.003999586-0.005463039)/0.005463039 # -26.8%
+
+########################
+# Macrophage & T cells #
+########################
+
+dim(raw_scaled[((raw_scaled$Highest %in% c('CD4','CD8a'))&
+                    ((raw_scaled$Second_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Third_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fifth_Highest %in% c('CD68','F480','MR-CD206'))))|
+                   ((raw_scaled$Second_Highest %in% c('CD4','CD8a'))&
+                      ((raw_scaled$Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Third_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fifth_Highest %in% c('CD68','F480','MR-CD206'))))|
+                   ((raw_scaled$Third_Highest %in% c('CD4','CD8a'))&
+                      ((raw_scaled$Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Second_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fifth_Highest %in% c('CD68','F480','MR-CD206')))),])
+
+3094/125022 # 2.5%
+
+dim(processed_scaled[((processed_scaled$Highest %in% c('CD4','CD8'))&
+                    ((processed_scaled$Second_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Third_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fifth_Highest %in% c('CD68','F480','CD206'))))|
+                   ((processed_scaled$Second_Highest %in% c('CD4','CD8'))&
+                      ((processed_scaled$Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Third_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fifth_Highest %in% c('CD68','F480','CD206'))))|
+                   ((processed_scaled$Third_Highest %in% c('CD4','CD8'))&
+                      ((processed_scaled$Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Second_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fifth_Highest %in% c('CD68','F480','CD206')))),])
+
+3865/125513 # 3.1%
+
+(0.03079362-0.02474764)/0.02474764 # 24.4%
+
+
+########################
+# Macrophage & B cells #
+########################
+
+dim(raw_scaled[((raw_scaled$Highest %in% c('B220'))&
+                    ((raw_scaled$Second_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Third_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206'))))|
+                   ((raw_scaled$Second_Highest %in% c('B220'))&
+                      ((raw_scaled$Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Third_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206'))))|
+                   ((raw_scaled$Third_Highest %in% c('B220'))&
+                      ((raw_scaled$Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Second_Highest %in% c('CD68','F480','MR-CD206'))|(raw_scaled$Fourth_Highest %in% c('CD68','F480','MR-CD206')))),])
+
+561/125022 # 0.4%
+
+dim(processed_scaled[((processed_scaled$Highest %in% c('B220'))&
+                    ((processed_scaled$Second_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Third_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206'))))|
+                   ((processed_scaled$Second_Highest %in% c('B220'))&
+                      ((processed_scaled$Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Third_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206'))))|
+                   ((processed_scaled$Third_Highest %in% c('B220'))&
+                      ((processed_scaled$Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Second_Highest %in% c('CD68','F480','CD206'))|(processed_scaled$Fourth_Highest %in% c('CD68','F480','CD206')))),])
+
+551/125513 # 0.4%
+
+(0.00448721-0.005734991)/0.005734991 # -21.8%
+
+################
+# DC & B cells #
+################
+
+head(raw_scaled)
+
+dim(raw_scaled[((raw_scaled$Highest %in% c('CD11c'))&
+                    ((raw_scaled$Second_Highest == 'B220')))|
+                   ((raw_scaled$Second_Highest %in% c('CD11c'))&
+                      ((raw_scaled$Highest == 'B220'))),])
+68/125022 # 0.05%
+
+dim(processed_scaled[((processed_scaled$Highest %in% c('CD11c'))&
+                    ((processed_scaled$Second_Highest == 'B220')))|
+                   ((processed_scaled$Second_Highest %in% c('CD11c'))&
+                      ((processed_scaled$Highest == 'B220'))),])
+
+40/125513 # 0.03%
+
+(0.0003186921-0.0005439043)/0.0005439043 # -41.4%
+
+#################
+# CD3 & B cells #
+#################
+
+head(raw_scaled)
+
+dim(raw_scaled[((raw_scaled$Highest %in% c('CD3e'))&
+                    ((raw_scaled$Second_Highest == 'B220')))|
+                   ((raw_scaled$Second_Highest %in% c('CD3e'))&
+                      ((raw_scaled$Highest == 'B220'))),])
+273/125022 # 0.2%
+
+dim(processed_scaled[((processed_scaled$Highest %in% c('CD3'))&
+                    ((processed_scaled$Second_Highest == 'B220')))|
+                   ((processed_scaled$Second_Highest %in% c('CD3'))&
+                      ((processed_scaled$Highest == 'B220'))),])
+
+141/125513 # 0.1%
+
+(0.00112339-0.002183616)/0.002183616 # -48.6%
+```
+
+```{r}
+df = as.data.frame(c('T/B cells','T cells/Macrophages','Macrophages/B cells','DC/B cells','CD3/B cells'))
+colnames(df) = 'Comparison'
+df$Raw = c(0.005463039, 0.02474764, 0.00448721, 0.0005439043, 0.002183616)
+df$Processed = c(0.003999586, 0.03079362, 0.004389984, 0.0003186921, 0.00112339)
+df$RelativeChange = c((0.003999586-0.005463039)/0.005463039, (0.03079362-0.02474764)/0.02474764,
+                      (0.004389984-0.00448721)/0.00448721, (0.0003186921-0.0005439043)/0.0005439043,
+                      (0.00112339-0.002183616)/0.002183616)
+df
+
+library(reshape2)
+df_melt = melt(df, id.vars = c('Comparison'), measure.vars = c('Raw','Processed','RelativeChange'))
+
+head(df_melt)
+
+df_melt$variable = factor(df_melt$variable,levels=c('Raw','Processed','RelativeChange'))
+
+ggplot(data = df_melt[df_melt$variable == 'RelativeChange',], aes(x = Comparison, y = value, fill=variable)) +
+  geom_col(position = position_dodge(width = 0.8), width=0.8) +
+  theme_bw() +
+  ggtitle(NULL) + xlab(NULL) + ylab("Relative Change (%)") +
+  theme(axis.text=element_text(size=25),
+        axis.title=element_text(size=30),
+        plot.title=element_text(size = 34, hjust = 0.5),
+        legend.position='none',
+        panel.grid = element_blank(),
+        legend.title=element_blank(),
+        legend.text=element_text(size=45),
+        aspect.ratio=1,
+        strip.text=element_text(size = 34, hjust = 0.5),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits=c(-0.5,0.5)) +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  scale_fill_manual(values=c('gray'))
+
+```
