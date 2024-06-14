@@ -2,7 +2,7 @@
 
 Code and data to reproduce the comparison in "IMmuneCite: an open-source workflow for processing multiplex images and analysis of immune enriched spatial proteomic data".
 
-Pre-processing and clustering pipelines can be found under the "IMmuneCite_Pipeline" repository (https://github.com/julietusc/IMmuneCite_Pipeline.git)
+IMmuneCite pre-processing and clustering pipelines can be found under the "IMmuneCite_Pipeline" repository at https://github.com/julietusc/IMmuneCite_Pipeline.git
 
 
 Citation:
