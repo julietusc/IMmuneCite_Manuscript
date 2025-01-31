@@ -4,6 +4,7 @@ Code and data to reproduce the comparison in "IMmuneCite: an open-source workflo
 
 IMmuneCite pre-processing and clustering pipelines can be found under the "IMmuneCite_Pipeline" repository at https://github.com/julietusc/IMmuneCite_Pipeline.git
 
+The human data used in this study was also used in one of our previous studies (https://doi.org/10.1126/sciadv.adm8841). The data can be found here: https://github.com/julietusc/IMC_liver_rejection_adults.
 
 Citation:
 
