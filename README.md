@@ -8,4 +8,4 @@ The human data used in this study was also used in one of our previous studies (
 
 Citation:
 
-Arianna Barbetta, Sarah Bangerth, Jason T.C. Lee et al. IMmuneCite: an integrated workflow for analysis of immune enriched spatial proteomic data, 09 July 2024, PREPRINT (Version 2) available at Research Square [https://doi.org/10.21203/rs.3.rs-4571625/v2]
+Barbetta, A., Bangerth, S., Lee, J.T.C. et al. Integrated workflow for analysis of immune enriched spatial proteomic data with IMmuneCite. Sci Rep 15, 9394 (2025). https://doi.org/10.1038/s41598-025-93060-y
